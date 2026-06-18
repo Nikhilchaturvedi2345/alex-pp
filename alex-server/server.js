@@ -2,8 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const path = require("path");
 const fs = require("fs");
-const edgeTTS = require("edge-tts");
-
+const gTTS = require("gtts");
 const app = express();
 
 app.use(cors());
@@ -59,10 +58,10 @@ app.get("/message", async (req, res) => {
   try {
     const random =
       responses[
-        Math.floor(
-          Math.random() *
-          responses.length
-        )
+      Math.floor(
+        Math.random() *
+        responses.length
+      )
       ];
 
     const fileName =
@@ -74,14 +73,17 @@ app.get("/message", async (req, res) => {
         "audio",
         fileName
       );
+    const tts = new gTTS(
+      random.message,
+      "en"
+    );
 
-    const tts =
-      new edgeTTS.Communicate(
-        random.message,
-        "en-US-GuyNeural"
-      );
-
-    await tts.save(filePath);
+    await new Promise((resolve, reject) => {
+      tts.save(filePath, (err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
 
     res.json({
       success: true,
