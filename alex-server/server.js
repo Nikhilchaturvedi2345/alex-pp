@@ -91,9 +91,7 @@ app.get("/message", async (req, res) => {
       face: random.face,
       message: random.message,
       audioUrl:
-        `${req.protocol}://${req.get(
-          "host"
-        )}/audio/${fileName}`
+        `https://alex-pp.onrender.com/audio/${fileName}`
     });
 
   } catch (error) {
