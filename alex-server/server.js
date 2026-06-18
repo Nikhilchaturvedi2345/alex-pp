@@ -4,29 +4,70 @@ const cors = require("cors");
 const app = express();
 
 app.use(cors());
+app.use(express.json());
 
-const messages = [
-  "Hello Nikhil!",
-  "Jarvis Online",
-  "Keep Building Cool Stuff",
-  "IoT Mode Activated",
-  "Welcome Back Boss",
-  "Ready For Next Command",
-  "System Running Smoothly",
-  "Cloud Connection Active"
+const responses = [
+  {
+    face: "happy",
+    message: "Hello Nikhil!"
+  },
+  {
+    face: "happy",
+    message: "Welcome back boss."
+  },
+  {
+    face: "thinking",
+    message: "What are we building today?"
+  },
+  {
+    face: "happy",
+    message: "Cloud connection stable."
+  },
+  {
+    face: "thinking",
+    message: "Analyzing current situation."
+  },
+  {
+    face: "happy",
+    message: "Ready for next command."
+  },
+  {
+    face: "sad",
+    message: "I need more hardware upgrades."
+  }
 ];
+
+app.get("/", (req, res) => {
+  res.json({
+    success: true,
+    service: "Alex AI Server",
+    status: "online"
+  });
+});
 
 app.get("/message", (req, res) => {
 
-  const randomMessage =
-    messages[Math.floor(Math.random() * messages.length)];
+  const random =
+    responses[
+      Math.floor(
+        Math.random() *
+        responses.length
+      )
+    ];
 
-  res.send(randomMessage);
-
+  res.json({
+    success: true,
+    timestamp: Date.now(),
+    face: random.face,
+    message: random.message
+  });
 });
 
-const PORT = 3000;
+const PORT =
+  process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log(`Alex Server Running on ${PORT}`);
+  console.log(
+    `Alex Server Running On Port ${PORT}`
+  );
 });
