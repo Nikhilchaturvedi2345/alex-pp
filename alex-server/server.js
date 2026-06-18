@@ -1,10 +1,20 @@
 const express = require("express");
 const cors = require("cors");
+const path = require("path");
+const fs = require("fs");
+const edgeTTS = require("edge-tts");
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
+
+app.use(
+  "/audio",
+  express.static(
+    path.join(__dirname, "audio")
+  )
+);
 
 const responses = [
   {
@@ -45,22 +55,54 @@ app.get("/", (req, res) => {
   });
 });
 
-app.get("/message", (req, res) => {
+app.get("/message", async (req, res) => {
+  try {
+    const random =
+      responses[
+        Math.floor(
+          Math.random() *
+          responses.length
+        )
+      ];
 
-  const random =
-    responses[
-      Math.floor(
-        Math.random() *
-        responses.length
-      )
-    ];
+    const fileName =
+      `speech-${Date.now()}.mp3`;
 
-  res.json({
-    success: true,
-    timestamp: Date.now(),
-    face: random.face,
-    message: random.message
-  });
+    const filePath =
+      path.join(
+        __dirname,
+        "audio",
+        fileName
+      );
+
+    const tts =
+      new edgeTTS.Communicate(
+        random.message,
+        "en-US-GuyNeural"
+      );
+
+    await tts.save(filePath);
+
+    res.json({
+      success: true,
+      timestamp: Date.now(),
+      face: random.face,
+      message: random.message,
+      audioUrl:
+        `${req.protocol}://${req.get(
+          "host"
+        )}/audio/${fileName}`
+    });
+
+  } catch (error) {
+    console.error(error);
+
+    res.status(500).json({
+      success: false,
+      message:
+        "Failed to generate speech"
+    });
+  }
 });
 
 const PORT =
