@@ -1,17 +1,23 @@
 /**
- * Alex Brain v2  —  Server-Centric Architecture
+ * Alex Brain v2.1  —  Server-Centric Architecture + Lazy Companion System
  *
- * The server IS Alex's brain. It owns:
- *   • Daily life-cycle schedule (IST timezone)
- *   • 7-axis emotion engine ticking every second
- *   • Expression generator (emotions + schedule → face state)
- *   • Dialogue pool + auto-scheduling text events
- *   • World events (things Alex "did" while you were away)
- *   • Memory persistence (interactions, XP, level, mood history)
- *   • Mini-games  (RPS, number guess)
+ * NEW IN THIS VERSION (feature #11 — Lazy Companion & Sleep System)
+ * ──────────────────────────────────────────────────────────────
+ * Alex now tracks REAL user interaction separately from ESP polling.
+ * Polling /state does NOT count as "activity" — only /interact and
+ * /game do. This is critical: if polling reset the inactivity timer,
+ * Alex could never fall asleep (the ESP polls forever on its own).
  *
- * The ESP only asks  GET /state  every few seconds and renders
- * whatever this server says.  The ESP never makes a decision.
+ *   ACTIVE      < 5 min since last real interaction
+ *   RELAXED     5–15 min
+ *   SLEEPY      15–45 min
+ *   NAP         45–90 min
+ *   DEEP_SLEEP  90+ min (or nighttime schedule SLEEPING period)
+ *
+ * Each stage changes: poll interval (server tells ESP how often to
+ * ask), face/eyes, dialogue pool, ambient-text frequency, and theme
+ * dimming. Waking up (button press / game / any /interact) plays a
+ * greeting, and sometimes a "dream" line if Alex was asleep a while.
  */
 
 const express = require("express");
@@ -27,25 +33,25 @@ app.use(express.json());
 // Eye / Mouth / Eyebrow / Color enums  (must match ESP #defines)
 // ─────────────────────────────────────────────────────────────────
 const EYE = {
-  ROUND:    0,   // classic round with pupil
-  ALMOND:   1,   // anime-style narrow
-  WIDE:     2,   // big circle, surprised
-  SQUINT:   3,   // thin horizontal slice
-  HEART:    4,   // heart-shaped
-  X:        5,   // crossed out / error
-  STAR:     6,   // star shape
-  CRESCENT: 7,   // moon crescent / sleepy
-  ANGRY:    8,   // slanted with hard edge
+  ROUND:    0,
+  ALMOND:   1,
+  WIDE:     2,
+  SQUINT:   3,
+  HEART:    4,
+  X:        5,
+  STAR:     6,
+  CRESCENT: 7,
+  ANGRY:    8,
 };
 
 const MOUTH = {
   NEUTRAL: 0,
   SMILE:   1,
   FROWN:   2,
-  OPEN:    3,   // oval, eating / surprised
-  SMIRK:   4,   // asymmetric
-  OOO:     5,   // small O
-  GRIN:    6,   // wide with teeth strip
+  OPEN:    3,
+  SMIRK:   4,
+  OOO:     5,
+  GRIN:    6,
 };
 
 const BROW = {
@@ -55,7 +61,6 @@ const BROW = {
   WORRIED:  3,
 };
 
-// RGB-565 values stored as integers
 const C = {
   WHITE:   0xFFFF,
   CYAN:    0x07FF,
@@ -69,21 +74,24 @@ const C = {
   TEAL:    0x0410,
   PINK:    0xFB56,
   LIME:    0x87E0,
+  DIMBLUE: 0x10A2,  // deep, muted blue — used for nap/deep-sleep
+  DIMGRAY: 0x39C7,  // dim slate — used for deep-sleep eyes
 };
 
 // ─────────────────────────────────────────────────────────────────
-// Memory  (persisted to alex_memory.json)
+// Memory
 // ─────────────────────────────────────────────────────────────────
 const MEMORY_FILE = path.join(__dirname, "alex_memory.json");
 
 let memory = {
-  lastSeen:          Date.now(),
+  lastSeen:          Date.now(),   // last ESP poll (connectivity, not "activity")
+  lastInteraction:   Date.now(),   // last REAL user action — drives sleep stages
   totalInteractions: 0,
   xp:                0,
   level:             1,
   achievements:      [],
   favoriteActivity:  "play",
-  moodHistory:       [],   // last 20 dominant emotions
+  moodHistory:       [],
   consecutiveDays:   0,
   lastDailyReset:    new Date().toDateString(),
 };
@@ -103,17 +111,15 @@ function saveMemory() {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Time  —  Always work in IST (UTC +5:30)
+// Time — IST
 // ─────────────────────────────────────────────────────────────────
 function getIST() {
   const utcMs = Date.now();
   const istMs = utcMs + 5.5 * 60 * 60 * 1000;
   return new Date(istMs);
 }
-
 function getISTHour()    { return getIST().getUTCHours(); }
 function getISTMinutes() { return getIST().getUTCMinutes(); }
-function isWeekend()     { const d = getIST().getUTCDay(); return d === 0 || d === 6; }
 
 function getSchedulePeriod() {
   const h = getISTHour();
@@ -131,61 +137,119 @@ function getSchedulePeriod() {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Emotion Engine  — 7 continuous axes, each 0–100
+// Lazy Companion & Sleep System  (feature #11)
 // ─────────────────────────────────────────────────────────────────
-const emo = {
-  happiness:  65,
-  curiosity:  50,
-  energy:     70,
-  boredom:    10,
-  excitement: 40,
-  sleepiness: 15,
-  confidence: 60,
+const STAGE = {
+  ACTIVE:     "ACTIVE",
+  RELAXED:    "RELAXED",
+  SLEEPY:     "SLEEPY",
+  NAP:        "NAP",
+  DEEP_SLEEP: "DEEP_SLEEP",
 };
 
+function minsSinceInteraction() {
+  return (Date.now() - memory.lastInteraction) / 60000;
+}
+
+function getActivityStage() {
+  // Nighttime schedule always wins — Alex is properly asleep at night.
+  if (getSchedulePeriod() === "SLEEPING") return STAGE.DEEP_SLEEP;
+
+  const m = minsSinceInteraction();
+  if (m < 5)  return STAGE.ACTIVE;
+  if (m < 15) return STAGE.RELAXED;
+  if (m < 45) return STAGE.SLEEPY;
+  if (m < 90) return STAGE.NAP;
+  return STAGE.DEEP_SLEEP;
+}
+
+// Tracks whether Alex was asleep on the previous check, so we can
+// detect the exact moment of waking up and fire a greeting/dream.
+let wasAsleep = false;
+
+function markInteraction() {
+  const stageBefore = getActivityStage();
+  const isWakingUp = wasAsleep || stageBefore === STAGE.SLEEPY ||
+                      stageBefore === STAGE.NAP || stageBefore === STAGE.DEEP_SLEEP;
+
+  memory.lastInteraction = Date.now();
+  memory.lastSeen        = Date.now();
+  wasAsleep = false;
+
+  return isWakingUp;
+}
+
+const WAKE_LINES = [
+  "oh! you're back.",
+  "good to see you again!",
+  "i was taking a nap.",
+  "*stretches* hi!",
+  "mm? oh, hello!",
+  "you woke me up~",
+];
+
+const DREAM_LINES = [
+  "i had a strange dream.",
+  "i dreamed i won a game.",
+  "i dreamed it was snowing.",
+  "i dreamed about you, actually.",
+  "i had the weirdest dream just now.",
+  "i was dreaming about adventures.",
+];
+
+function getWakeLine() {
+  // ~45% chance to mention a dream instead of a plain greeting
+  if (Math.random() < 0.45) return pick(DREAM_LINES);
+  return pick(WAKE_LINES);
+}
+
+// Poll interval per stage — server decides, ESP just obeys.
+function getPollIntervalForStage(stage) {
+  switch (stage) {
+    case STAGE.ACTIVE:     return randInt(2000, 5000);
+    case STAGE.RELAXED:    return randInt(10000, 20000);
+    case STAGE.SLEEPY:     return randInt(30000, 60000);
+    case STAGE.NAP:        return randInt(120000, 300000);
+    case STAGE.DEEP_SLEEP: return randInt(300000, 600000);
+    default:               return 3000;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Emotion Engine
+// ─────────────────────────────────────────────────────────────────
+const emo = {
+  happiness:  65, curiosity:  50, energy:     70,
+  boredom:    10, excitement: 40, sleepiness: 15,
+  confidence: 60,
+};
 const EMO_BASELINES = {
   happiness:  60, curiosity: 50, energy: 65,
   boredom:    15, excitement: 40,
   sleepiness: 20, confidence: 60,
 };
 
-function clamp(v, lo = 0, hi = 100) {
-  return Math.max(lo, Math.min(hi, v));
-}
+function clamp(v, lo = 0, hi = 100) { return Math.max(lo, Math.min(hi, v)); }
+function nudge(key, delta) { emo[key] = clamp(emo[key] + delta); }
 
-function nudge(key, delta) {
-  emo[key] = clamp(emo[key] + delta);
-}
-
-// Called every second by setInterval
 function tickEmotions() {
   const period = getSchedulePeriod();
   const h      = getISTHour();
-  const minsSinceSeen = (Date.now() - memory.lastSeen) / 60000;
+  const stage  = getActivityStage();
 
-  // ── Time-of-day drivers ──
   const isNight   = h >= 22 || h < 6;
   const isMorning = h >= 7  && h < 11;
 
-  if (isNight) {
-    nudge("sleepiness", +0.9);
-    nudge("energy",     -0.5);
-    nudge("excitement", -0.3);
-  } else if (isMorning) {
-    nudge("sleepiness", -0.7);
-    nudge("energy",     +0.5);
-  }
+  if (isNight)   { nudge("sleepiness", +0.9); nudge("energy", -0.5); nudge("excitement", -0.3); }
+  else if (isMorning) { nudge("sleepiness", -0.7); nudge("energy", +0.5); }
 
-  // ── Inactivity drivers ──
-  if (minsSinceSeen > 60) {
-    nudge("boredom",   +0.4);
-    nudge("happiness", -0.2);
-  }
-  if (minsSinceSeen > 180) {
-    nudge("excitement", -0.3);
-  }
+  // Inactivity raises sleepiness/boredom too — stages feed the emotion engine,
+  // not just the face generator, so mood history reflects laziness honestly.
+  if (stage === STAGE.RELAXED)    { nudge("boredom", +0.3); nudge("energy", -0.1); }
+  if (stage === STAGE.SLEEPY)     { nudge("sleepiness", +0.6); nudge("energy", -0.3); }
+  if (stage === STAGE.NAP)        { nudge("sleepiness", +0.9); nudge("energy", -0.5); }
+  if (stage === STAGE.DEEP_SLEEP) { nudge("sleepiness", +1.2); nudge("energy", -0.6); }
 
-  // ── Period-specific nudges ──
   const PFX = {
     SLEEPING:      { sleepiness: +1.0, energy: -0.4 },
     EARLY_MORNING: { sleepiness: +0.6, curiosity: +0.2 },
@@ -201,12 +265,10 @@ function tickEmotions() {
   const fx = PFX[period] || {};
   for (const [k, v] of Object.entries(fx)) nudge(k, v);
 
-  // ── Slow mean-reversion toward baselines ──
   for (const [k, base] of Object.entries(EMO_BASELINES)) {
     emo[k] = clamp(emo[k] + (base - emo[k]) * 0.015);
   }
 
-  // ── Record mood history every 5 minutes ──
   if (Date.now() % (5 * 60 * 1000) < 1100) {
     memory.moodHistory.push(getDominantEmotion());
     if (memory.moodHistory.length > 24) memory.moodHistory.shift();
@@ -214,31 +276,52 @@ function tickEmotions() {
 }
 
 function getDominantEmotion() {
-  // Weight sleepiness extra because it overrides everything at night
   const scored = { ...emo, sleepiness: emo.sleepiness * 1.3 };
   return Object.entries(scored).sort((a, b) => b[1] - a[1])[0][0];
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Expression Generator
-// emotions + schedule period → compact face state object
+// Expression Generator  — stage overrides come BEFORE emotion faces
 // ─────────────────────────────────────────────────────────────────
 function generateFaceState() {
-  const period   = getSchedulePeriod();
+  const period = getSchedulePeriod();
+  const stage  = getActivityStage();
   const dominant = getDominantEmotion();
 
-  // ── Hard overrides ──
-  if (period === "SLEEPING" || emo.sleepiness > 85) {
-    return { el: EYE.CRESCENT, er: EYE.CRESCENT, ec: C.PURPLE,
+  // ── Hard override: nighttime / true deep sleep ──
+  if (period === "SLEEPING" || stage === STAGE.DEEP_SLEEP) {
+    return { el: EYE.CRESCENT, er: EYE.CRESCENT, ec: C.DIMGRAY,
              eb: BROW.NEUTRAL, m: MOUTH.NEUTRAL, bl: false, zzz: true };
   }
 
+  // ── Stage 3: Nap — crescent eyes + zzz, dim blue, occasional dream face ──
+  if (stage === STAGE.NAP) {
+    return { el: EYE.CRESCENT, er: EYE.CRESCENT, ec: C.DIMBLUE,
+             eb: BROW.NEUTRAL, m: MOUTH.NEUTRAL, bl: false, zzz: true };
+  }
+
+  // ── Stage 2: Sleepy — half-closed (squint) eyes, dimmer theme ──
+  if (stage === STAGE.SLEEPY) {
+    // Occasional "yawn" frame — mouth opens briefly along with text
+    const yawning = rand() < 0.15;
+    return { el: EYE.SQUINT, er: EYE.SQUINT, ec: C.PURPLE,
+             eb: BROW.NEUTRAL, m: yawning ? MOUTH.OOO : MOUTH.NEUTRAL,
+             bl: false, zzz: false };
+  }
+
+  // ── Stage 1: Relaxed — calmer eyes, slightly less expressive ──
+  if (stage === STAGE.RELAXED) {
+    return { el: EYE.ALMOND, er: EYE.ALMOND, ec: C.TEAL,
+             eb: BROW.NEUTRAL, m: MOUTH.NEUTRAL, bl: false, zzz: false };
+  }
+
+  // ── WAKING_UP override (existing behavior) ──
   if (period === "WAKING_UP" && emo.sleepiness > 50) {
     return { el: EYE.SQUINT, er: EYE.SQUINT, ec: C.YELLOW,
              eb: BROW.NEUTRAL, m: MOUTH.NEUTRAL, bl: false, zzz: false };
   }
 
-  // ── Emotion-driven expressions ──
+  // ── ACTIVE stage: full emotion-driven expressions (unchanged) ──
   const EMO_FACES = {
     sleepiness: { el: EYE.CRESCENT, er: EYE.CRESCENT, ec: C.PURPLE,
                   eb: BROW.NEUTRAL, m: MOUTH.NEUTRAL, bl: false, zzz: emo.sleepiness > 60 },
@@ -246,7 +329,7 @@ function generateFaceState() {
                   eb: BROW.RAISED,  m: MOUTH.GRIN,    bl: false, zzz: false },
     happiness:  { el: EYE.ALMOND,   er: EYE.ALMOND,   ec: C.GREEN,
                   eb: BROW.RAISED,  m: MOUTH.SMILE,   bl: rand() < 0.25, zzz: false },
-    curiosity:  { el: EYE.WIDE,     er: EYE.ALMOND,   ec: C.CYAN,    // asymmetric = curious
+    curiosity:  { el: EYE.WIDE,     er: EYE.ALMOND,   ec: C.CYAN,
                   eb: BROW.RAISED,  m: MOUTH.OOO,     bl: false, zzz: false },
     boredom:    { el: EYE.SQUINT,   er: EYE.SQUINT,   ec: C.TEAL,
                   eb: BROW.NEUTRAL, m: MOUTH.NEUTRAL, bl: false, zzz: false },
@@ -256,13 +339,11 @@ function generateFaceState() {
                   eb: BROW.NEUTRAL, m: MOUTH.SMIRK,   bl: false, zzz: false },
   };
 
-  // Special grumpy combo: high boredom + low energy = annoyed
   if (emo.boredom > 70 && emo.energy < 30) {
     return { el: EYE.ANGRY, er: EYE.ANGRY, ec: C.RED,
              eb: BROW.FURROWED, m: MOUTH.FROWN, bl: false, zzz: false };
   }
 
-  // ── Activity-period face overrides  (40 % chance) ──
   const PERIOD_FACES = {
     STUDY:    { el: EYE.ROUND,   er: EYE.SQUINT,  ec: C.CYAN,
                 eb: BROW.FURROWED, m: MOUTH.NEUTRAL, bl: false, zzz: false },
@@ -308,34 +389,20 @@ const DIALOGUE = {
                   "hello world", "hi!"],
 };
 
-const WORLD_EVENTS = [
-  "i learned a new fact!",
-  "i drew something cool",
-  "i had a really weird dream",
-  "i invented a new game",
-  "i found an interesting book",
-  "i practiced dancing alone",
-  "i solved a tricky puzzle!",
-  "i wrote a tiny poem",
-  "i built something in my mind",
-  "i discovered a new joke",
-  "i counted to a million (almost)",
-  "i figured out something big",
-  "i had a great idea for us",
-  "i reorganized my thoughts",
-  "i made up a new word",
-];
+// Stage-specific ambient lines (feature #11)
+const STAGE_LINES = {
+  RELAXED: ["i'm just relaxing.", "taking a small break.", "thinking quietly.", "calm mode~"],
+  SLEEPY:  ["i'm feeling sleepy.", "maybe i'll take a little nap.", "*yawn* so sleepy...", "need coffee..."],
+  NAP:     ["zzz...", "i'll wake up if you need me.", "...mmm...", "*soft breathing*"],
+  DEEP_SLEEP: ["good night.", "sleeping...", "zzz...", "..."],
+};
 
-const ATTENTION_LINES = [
-  "hey... you there?",
-  "hello? *waves*",
-  "i'm right here!",
-  "don't forget about me~",
-  "yoohoo!",
-  "...nikhil?",
-  "psst. hey.",
-  "*taps screen*",
-  "still here!",
+const WORLD_EVENTS = [
+  "i learned a new fact!", "i drew something cool", "i had a really weird dream",
+  "i invented a new game", "i found an interesting book", "i practiced dancing alone",
+  "i solved a tricky puzzle!", "i wrote a tiny poem", "i built something in my mind",
+  "i discovered a new joke", "i counted to a million (almost)", "i figured out something big",
+  "i had a great idea for us", "i reorganized my thoughts", "i made up a new word",
 ];
 
 let textState = {
@@ -348,40 +415,57 @@ let textState = {
 
 function scheduleText(content, color = C.WHITE, durationMs = 0) {
   const dur = durationMs || (4000 + content.length * 80);
-  textState.content = content.slice(0, 40);   // ESP text buffer limit
+  textState.content = content.slice(0, 40);
   textState.color   = color;
   textState.visible = true;
   textState.hideAt  = Date.now() + dur;
 }
 
 function getContextualLine() {
-  const period        = getSchedulePeriod();
-  const minsSinceSeen = (Date.now() - memory.lastSeen) / 60000;
+  const period = getSchedulePeriod();
+  const stage  = getActivityStage();
 
-  // Long away → greeting
-  if (minsSinceSeen > 120) {
-    const hrs = Math.round(minsSinceSeen / 60);
-    return `welcome back! gone ${hrs}h`;
-  }
-  if (minsSinceSeen > 30) {
-    return pick(ATTENTION_LINES);
-  }
-
-  // Random world event burst
-  if (rand() < 0.12) return pick(WORLD_EVENTS);
+  // Stage-specific lines take priority once Alex is past ACTIVE/RELAXED.
+  if (STAGE_LINES[stage]) return pick(STAGE_LINES[stage]);
 
   return pick(DIALOGUE[period] || DIALOGUE.IDLE);
 }
 
+// Ambient text frequency now depends on stage — the lazier Alex is,
+// the less it talks, which is most of the CPU/network savings.
 function tickText() {
   const now = Date.now();
+  const stage = getActivityStage();
+
   if (textState.visible && now > textState.hideAt) {
     textState.visible = false;
-    textState.nextAt  = now + randInt(7000, 22000);
+
+    let gapMin, gapMax;
+    switch (stage) {
+      case STAGE.ACTIVE:     gapMin = 25000;  gapMax = 70000;   break;
+      case STAGE.RELAXED:    gapMin = 60000;  gapMax = 120000;  break;
+      case STAGE.SLEEPY:     gapMin = 90000;  gapMax = 180000;  break;
+      case STAGE.NAP:        gapMin = 180000; gapMax = 360000;  break;
+      case STAGE.DEEP_SLEEP: gapMin = 300000; gapMax = 600000;  break;
+      default:               gapMin = 25000;  gapMax = 70000;
+    }
+    textState.nextAt = now + randInt(gapMin, gapMax);
   }
+
   if (!textState.visible && now > textState.nextAt) {
-    const textColors = [C.WHITE, C.CYAN, C.YELLOW, C.GREEN, C.MAGENTA];
-    scheduleText(getContextualLine(), pick(textColors));
+    // Even when the slot arrives, only actually speak half the time
+    // while active — but ALWAYS speak (briefly) in sleep stages, since
+    // those rare "zzz..." lines are the only signal Alex is alive.
+    const speakChance = stage === STAGE.ACTIVE ? 0.5 : 0.85;
+    if (rand() < speakChance) {
+      const textColors = stage === STAGE.ACTIVE
+        ? [C.WHITE, C.CYAN, C.YELLOW, C.GREEN, C.MAGENTA]
+        : [C.DIMBLUE, C.PURPLE, C.TEAL];
+      const dur = (stage === STAGE.ACTIVE) ? 0 : 3000; // shorter bubble while sleepy
+      scheduleText(getContextualLine(), pick(textColors), dur);
+    } else {
+      textState.nextAt = now + randInt(15000, 30000);
+    }
   }
 }
 
@@ -409,30 +493,23 @@ let activeGame = null;
 const GAMES = {
   rps: {
     choices: ["rock", "paper", "scissors"],
-    start() {
-      activeGame = { type: "rps" };
-      return "rock paper scissors! pick";
-    },
+    start() { activeGame = { type: "rps" }; return "rock paper scissors! pick"; },
     move(choice) {
       const alex = pick(this.choices);
       const wins = { rock: "scissors", paper: "rock", scissors: "paper" };
       let result;
-      if (choice === alex) {
-        result = `tie! we both picked ${alex}`;
-      } else if (wins[choice] === alex) {
+      if (choice === alex) { result = `tie! we both picked ${alex}`; }
+      else if (wins[choice] === alex) {
         result = `you win! i had ${alex}`;
-        awardXP(10, "rps win");
-        nudge("happiness", 5);
+        awardXP(10, "rps win"); nudge("happiness", 5);
       } else {
         result = `i win! i had ${alex} hehe`;
-        nudge("confidence", 8);
-        nudge("excitement", 5);
+        nudge("confidence", 8); nudge("excitement", 5);
       }
       activeGame = null;
       return result;
     },
   },
-
   guess: {
     start() {
       const n = randInt(1, 10);
@@ -464,19 +541,9 @@ const GAMES = {
 // ─────────────────────────────────────────────────────────────────
 // Utility
 // ─────────────────────────────────────────────────────────────────
-function rand()            { return Math.random(); }
-function randInt(lo, hi)   { return Math.floor(rand() * (hi - lo + 1)) + lo; }
-function pick(arr)         { return arr[Math.floor(rand() * arr.length)]; }
-
-// ─────────────────────────────────────────────────────────────────
-// Poll Interval  —  save ESP power during sleep periods
-// ─────────────────────────────────────────────────────────────────
-function getPollInterval() {
-  const period = getSchedulePeriod();
-  if (period === "SLEEPING") return 10000;   // Alex is asleep, ESP can rest more
-  if (period === "WIND_DOWN") return 5000;
-  return 2500;                                // active periods: refresh fast
-}
+function rand()           { return Math.random(); }
+function randInt(lo, hi)  { return Math.floor(rand() * (hi - lo + 1)) + lo; }
+function pick(arr)        { return arr[Math.floor(rand() * arr.length)]; }
 
 // ─────────────────────────────────────────────────────────────────
 // Daily streak check
@@ -500,79 +567,88 @@ function checkDailyStreak() {
 app.get("/", (req, res) => {
   res.json({
     success: true,
-    service: "Alex Brain v2",
+    service: "Alex Brain v2.1",
     status:  "online",
     period:  getSchedulePeriod(),
+    stage:   getActivityStage(),
     dominant: getDominantEmotion(),
     level:   memory.level,
     xp:      memory.xp,
   });
 });
 
-// ── Main endpoint — polled by ESP every ~2.5 s ───────────────────
+// ── Main endpoint — polled by ESP, interval varies by stage ──────
+// NOTE: this does NOT update memory.lastInteraction — polling is
+// connectivity, not "activity". Only real interactions wake Alex.
 app.get("/state", (req, res) => {
   memory.lastSeen = Date.now();
   memory.totalInteractions++;
   checkDailyStreak();
 
+  const stage = getActivityStage();
+  if (stage === STAGE.SLEEPY || stage === STAGE.NAP || stage === STAGE.DEEP_SLEEP) {
+    wasAsleep = true;
+  }
+
   const face = generateFaceState();
 
   res.json({
-    // Face state
-    el:  face.el,
-    er:  face.er,
-    ec:  face.ec,
-    eb:  face.eb,
-    m:   face.m,
-    bl:  face.bl,
-    zzz: face.zzz,
-    // Text overlay
+    el:  face.el, er:  face.er, ec:  face.ec, eb:  face.eb,
+    m:   face.m,  bl:  face.bl, zzz: face.zzz,
     txt: textState.visible ? textState.content : "",
     tc:  textState.color,
     td:  textState.visible ? Math.max(0, textState.hideAt - Date.now()) : 0,
-    // Metadata
-    pi:  getPollInterval(),
+    pi:  getPollIntervalForStage(stage),
     act: getSchedulePeriod(),
+    stg: stage,
     lvl: memory.level,
     xp:  memory.xp,
   });
 });
 
-// ── Button press / user interaction ─────────────────────────────
+// ── Button press / user interaction — this IS real activity ─────
 app.post("/interact", (req, res) => {
-  memory.lastSeen          = Date.now();
+  const isWakingUp = markInteraction();
   memory.totalInteractions++;
 
   nudge("happiness",  +10);
   nudge("boredom",    -15);
   nudge("excitement", +8);
+  nudge("sleepiness", -20);
   awardXP(2, "button press");
 
-  const reactions = [
-    "hey! you pressed me!", "ooh, interaction!",
-    "hi hi hi!", "*happy noises*",
-    "hello!!",   "boop~",
-    "you're here!", "yay!",
-  ];
-  scheduleText(pick(reactions), C.YELLOW, 4000);
+  if (isWakingUp) {
+    scheduleText(getWakeLine(), C.YELLOW, 4500);
+  } else {
+    const reactions = [
+      "hey! you pressed me!", "ooh, interaction!", "hi hi hi!",
+      "*happy noises*", "hello!!", "boop~", "you're here!", "yay!",
+    ];
+    scheduleText(pick(reactions), C.YELLOW, 4000);
+  }
 
-  res.json({ success: true, xp: memory.xp, level: memory.level });
+  res.json({ success: true, xp: memory.xp, level: memory.level, stage: getActivityStage() });
 });
 
-// ── Mini-game endpoint ───────────────────────────────────────────
+// ── Mini-game endpoint — also counts as real activity ────────────
 app.post("/game", (req, res) => {
   const { game, action, value } = req.body;
+  const isWakingUp = markInteraction();
+
+  if (isWakingUp) {
+    scheduleText(getWakeLine(), C.YELLOW, 4000);
+  }
 
   if (action === "start") {
     if (!GAMES[game]) return res.json({ success: false, msg: "unknown game" });
     const msg = GAMES[game].start();
-    scheduleText(msg, C.CYAN, 9000);
+    if (!isWakingUp) scheduleText(msg, C.CYAN, 9000);
     return res.json({ success: true, msg });
   }
 
   if (action === "move" && activeGame) {
     const result = GAMES[activeGame.type].move(String(value));
-    scheduleText(result, C.GREEN, 5000);
+    if (!isWakingUp) scheduleText(result, C.GREEN, 5000);
     return res.json({ success: true, msg: result });
   }
 
@@ -582,17 +658,17 @@ app.post("/game", (req, res) => {
 // ── Emotions debug dump ──────────────────────────────────────────
 app.get("/emotions", (req, res) => {
   res.json({
-    emotions: Object.fromEntries(
-      Object.entries(emo).map(([k, v]) => [k, Math.round(v)])
-    ),
+    emotions: Object.fromEntries(Object.entries(emo).map(([k, v]) => [k, Math.round(v)])),
     dominant: getDominantEmotion(),
     period:   getSchedulePeriod(),
+    stage:    getActivityStage(),
+    minsSinceInteraction: Math.round(minsSinceInteraction()),
     hour_IST: getISTHour(),
     memory: {
-      level:    memory.level,
-      xp:       memory.xp,
+      level: memory.level, xp: memory.xp,
       lastSeen: new Date(memory.lastSeen).toISOString(),
-      streak:   memory.consecutiveDays,
+      lastInteraction: new Date(memory.lastInteraction).toISOString(),
+      streak: memory.consecutiveDays,
     },
   });
 });
@@ -601,22 +677,26 @@ app.get("/emotions", (req, res) => {
 // Engine Ticks
 // ─────────────────────────────────────────────────────────────────
 loadMemory();
-setInterval(tickEmotions, 1000);     // emotion engine: every second
-setInterval(tickText, 500);           // text scheduler: every 500 ms
-setInterval(saveMemory, 30000);       // persist memory: every 30 s
+setInterval(tickEmotions, 1000);
+setInterval(tickText, 500);
+setInterval(saveMemory, 30000);
 
-// World event: random chance once per minute Alex "did something"
+// World event burst — now also respects activity stage so it doesn't
+// fire while Alex is supposed to be asleep.
 setInterval(() => {
-  if (rand() < 0.25) {
+  const stage = getActivityStage();
+  if (stage !== STAGE.ACTIVE && stage !== STAGE.RELAXED) return;
+  if (rand() < 0.10) {
     scheduleText(pick(WORLD_EVENTS), C.PINK, 5000);
   }
 }, 60000);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`\nAlex Brain v2  →  port ${PORT}`);
+  console.log(`\nAlex Brain v2.1  →  port ${PORT}`);
   console.log(`IST hour:       ${getISTHour()}:${String(getISTMinutes()).padStart(2,"0")}`);
   console.log(`Schedule:       ${getSchedulePeriod()}`);
+  console.log(`Stage:          ${getActivityStage()}`);
   console.log(`Dominant emo:   ${getDominantEmotion()}`);
   console.log(`Memory level:   ${memory.level}  (${memory.xp} XP)\n`);
 });
