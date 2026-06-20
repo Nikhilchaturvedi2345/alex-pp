@@ -34,6 +34,16 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Phase 2: the ESP's HTTP client occasionally sends truncated/odd
+// bodies on flaky WiFi. Without this, a JSON parse error from
+// express.json() would propagate as an unhandled 500 with no body.
+app.use((err, req, res, next) => {
+  if (err.type === "entity.parse.failed") {
+    return res.status(400).json({ success: false, error: "Malformed JSON body" });
+  }
+  next(err);
+});
+
 // ─────────────────────────────────────────────────────────────────
 // Eye / Mouth / Eyebrow / Color enums  (must match ESP #defines)
 // ─────────────────────────────────────────────────────────────────

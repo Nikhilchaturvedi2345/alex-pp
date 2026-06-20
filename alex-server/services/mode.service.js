@@ -79,11 +79,15 @@ function switchMode(requestedMode) {
   const nextModule = REGISTRY[requestedMode];
 
   if (previousMode === requestedMode) {
+    const reentryLine =
+      typeof nextModule.getReentryLine === "function"
+        ? nextModule.getReentryLine()
+        : null;
     return {
       success: true,
       mode: currentMode,
       previousMode,
-      ackLine: nextModule.getReentryLine ? nextModule.getReentryLine() : nextModule.ackLine,
+      ackLine: reentryLine || nextModule.ackLine,
       changed: false,
     };
   }
@@ -110,16 +114,9 @@ function switchMode(requestedMode) {
  * later phases can extend this with per-mode submenu data.
  */
 function getUIState() {
-  const modeLabels = {};
-  for (const key of AVAILABLE_MODES) {
-    modeLabels[key] = REGISTRY[key].label || key;
-  }
-
   return {
     mode: currentMode,
     availableModes: AVAILABLE_MODES,
-    modeLabels,                     // NEW — e.g. { GAME: "Game", ... }
-    currentLabel: REGISTRY[currentMode]?.label || currentMode,
   };
 }
 
