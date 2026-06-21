@@ -1,5 +1,6 @@
 {
   "lastSeen": 1781861951019,
+  "lastInteraction": 1782020506789,
   "totalInteractions": 0,
   "xp": 0,
   "level": 1,
@@ -10,5 +11,31 @@
     "happiness"
   ],
   "consecutiveDays": 0,
-  "lastDailyReset": "Fri Jun 19 2026"
+  "lastDailyReset": "Fri Jun 19 2026",
+  "lastMode": "COMPANION",
+  "episodic": [],
+  "knowledge": {
+    "userLikes": [],
+    "userDislikes": [],
+    "selfConcept": "I am Alex, a small robot with big feelings.",
+    "learnedFacts": []
+  },
+  "relationship": {
+    "trust": 0.5,
+    "intimacy": 0.3,
+    "playfulness": 0.6,
+    "conflict": 0,
+    "totalPlaySessions": 0,
+    "totalConversations": 0,
+    "lastConflict": null
+  },
+  "stats": {
+    "totalWakeups": 0,
+    "totalDreams": 0,
+    "totalGamesPlayed": 0,
+    "totalGamesWon": 0,
+    "favoriteGame": null,
+    "longestIdleMinutes": 0,
+    "mostUsedMode": "COMPANION"
+  }
 }
