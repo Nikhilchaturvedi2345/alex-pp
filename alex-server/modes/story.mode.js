@@ -1,8 +1,7 @@
 /**
  * story.mode.js
  * ──────────────
- * Phase 1 scope: framework only. Phase 6 will add story selection,
- * progression, and a button-driven choice system.
+ * Interactive story mode.
  */
 
 module.exports = {
@@ -11,10 +10,10 @@ module.exports = {
   ackLine: "Story Mode Ready.",
 
   onEnter() {
-    // Phase 6: load selected story's current node here.
+    // Load current story node
   },
 
   onExit() {
-    // No-op for now.
+    // Save bookmark
   },
 };

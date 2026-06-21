@@ -1,9 +1,7 @@
 /**
  * weather.mode.js
  * ────────────────
- * Phase 1 scope: framework only. Phase 4 will add placeholder
- * Temperature / Humidity / Forecast screens, and later swap in a
- * real weather API.
+ * Weather expert mode.
  */
 
 module.exports = {
@@ -12,10 +10,10 @@ module.exports = {
   ackLine: "Weather Mode Activated.",
 
   onEnter() {
-    // Phase 4: fetch/refresh placeholder weather data here.
+    // Fetch weather data
   },
 
   onExit() {
-    // No-op for now.
+    // Cleanup
   },
 };

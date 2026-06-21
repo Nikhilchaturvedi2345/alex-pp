@@ -1,16 +1,7 @@
 /**
  * mode.service.js
  * ────────────────
- * Phase 1 — Mode Framework (framework only, per the roadmap).
- *
- * Owns which mode Alex is currently in, the registry of available
- * modes, and the switching logic. Each mode module under /modes
- * only needs to export a small descriptor — this service doesn't
- * care about each mode's internals yet (that's Phases 3-6).
- *
- * Other services/routes never set the mode directly — they always
- * go through switchMode() so acknowledgement lines, validation, and
- * future onEnter/onExit hooks all stay in one place.
+ * Mode registry and switching with onEnter/onExit hooks.
  */
 
 const memoryService = require("./memory.service");
@@ -20,14 +11,17 @@ const game = require("../modes/game.mode");
 const weather = require("../modes/weather.mode");
 const learn = require("../modes/learn.mode");
 const story = require("../modes/story.mode");
+const focus = require("../modes/focus.mode");
+const music = require("../modes/music.mode");
 
-// Registry — order here is also menu order on the ESP.
 const REGISTRY = {
   COMPANION: companion,
   GAME: game,
   WEATHER: weather,
   LEARN: learn,
   STORY: story,
+  FOCUS: focus,
+  MUSIC: music,
 };
 
 const AVAILABLE_MODES = Object.keys(REGISTRY);
@@ -58,13 +52,6 @@ function isValidMode(mode) {
   return typeof mode === "string" && Boolean(REGISTRY[mode]);
 }
 
-/**
- * Switch Alex's active mode.
- * Returns { success, mode, ackLine, previousMode } — ackLine is the
- * line Alex should speak to confirm the switch (e.g. "Entering Game
- * Mode."), sourced from the mode module so each mode can eventually
- * customize its own greeting.
- */
 function switchMode(requestedMode) {
   if (!isValidMode(requestedMode)) {
     return {
@@ -109,10 +96,6 @@ function switchMode(requestedMode) {
   };
 }
 
-/**
- * Drives ESP menu rendering. Phase 1 just needs mode + availableModes;
- * later phases can extend this with per-mode submenu data.
- */
 function getUIState() {
   return {
     mode: currentMode,

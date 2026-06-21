@@ -1,8 +1,7 @@
 /**
  * memory.service.js (v2.0)
  * ──────────────────────
- * Enhanced episodic memory system. Alex now keeps a diary of events
- * with emotional tags, importance scores, and relationship modeling.
+ * Enhanced episodic memory system with relationship modeling.
  */
 
 const fs = require("fs");
@@ -22,19 +21,13 @@ let memory = {
   consecutiveDays: 0,
   lastDailyReset: new Date().toDateString(),
   lastMode: "COMPANION",
-  
-  // NEW: Episodic memory — Alex's diary
   episodic: [],
-  
-  // NEW: Semantic memory — what Alex "knows"
   knowledge: {
     userLikes: [],
     userDislikes: [],
     selfConcept: "I am Alex, a small robot with big feelings.",
     learnedFacts: [],
   },
-  
-  // NEW: Relationship model
   relationship: {
     trust: 0.5,
     intimacy: 0.3,
@@ -44,8 +37,6 @@ let memory = {
     totalConversations: 0,
     lastConflict: null,
   },
-  
-  // NEW: Long-term stats
   stats: {
     totalWakeups: 0,
     totalDreams: 0,
@@ -62,7 +53,6 @@ function load() {
     if (fs.existsSync(MEMORY_FILE)) {
       const saved = JSON.parse(fs.readFileSync(MEMORY_FILE, "utf8"));
       memory = { ...memory, ...saved };
-      // Ensure new fields exist in old saves
       if (!memory.episodic) memory.episodic = [];
       if (!memory.knowledge) memory.knowledge = memory.knowledge;
       if (!memory.relationship) memory.relationship = memory.relationship;
@@ -91,22 +81,18 @@ function set(partial) {
   return memory;
 }
 
-// Record an event in episodic memory
 function recordEvent(event) {
   const entry = {
     timestamp: Date.now(),
     importance: event.importance || 0.5,
     ...event,
   };
-  
+
   memory.episodic.unshift(entry);
-  
-  // Keep last 100 memories
   if (memory.episodic.length > 100) {
     memory.episodic = memory.episodic.slice(0, 100);
   }
-  
-  // Update relationship if relevant
+
   if (event.type === "interaction" && event.quality) {
     memory.relationship.intimacy = Math.min(1, memory.relationship.intimacy + event.quality * 0.01);
   }
@@ -114,7 +100,7 @@ function recordEvent(event) {
     memory.relationship.conflict += 0.1;
     memory.relationship.lastConflict = Date.now();
   }
-  
+
   save();
 }
 
@@ -125,7 +111,7 @@ function getRecentMemories(count = 5, type = null) {
 }
 
 function getMemoriesByEmotion(minValence = -1, maxValence = 1) {
-  return memory.episodic.filter(m => 
+  return memory.episodic.filter(m =>
     m.valence !== undefined && m.valence >= minValence && m.valence <= maxValence
   );
 }
@@ -173,7 +159,6 @@ function checkDailyStreak(todayKey) {
   return false;
 }
 
-// Learn something about the user
 function learnAboutUser(thing, isLike = true) {
   const target = isLike ? memory.knowledge.userLikes : memory.knowledge.userDislikes;
   if (!target.includes(thing)) {
