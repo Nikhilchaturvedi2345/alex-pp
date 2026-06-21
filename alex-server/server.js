@@ -1,13 +1,7 @@
 /**
- * Alex Brain v4.0 — "The Inner World" + Emo Bot Protocol
- * ──────────────────────────────────────────────────────────────
- * Complete redesign with:
- *   - Personality Core (Big Five traits)
- *   - Mood Engine (persistent valence-arousal-dominance)
- *   - Internal Life System (activities, thoughts, dreams)
- *   - Episodic Memory (diary with emotions)
- *   - Causal Interpretation (Alex knows WHY he feels things)
- *   - Emo Bot face protocol (rectangular eyes, activity icons, no mouth)
+ * Alex Brain v4.1 — "True Emo Bot" Protocol
+ * ═══════════════════════════════════════════════════════════════
+ * Updated to match pill-shaped eyes with glow, no mouth, activity icons
  */
 
 const express = require("express");
@@ -31,32 +25,31 @@ app.use((err, req, res, next) => {
   next(err);
 });
 
-// ═════════════════════════════════════════════════════════════════
-// COLOR / FACE / ICON ENUMS (match ESP v4.0)
-// ═════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
+// COLOR / FACE / ICON ENUMS (match ESP v4.1)
+// ═══════════════════════════════════════════════════════════════
 const C = {
   WHITE: 0xFFFF, CYAN: 0x07FF, GREEN: 0x07E0, YELLOW: 0xFFE0,
   MAGENTA: 0xF81F, ORANGE: 0xFD20, BLUE: 0x001F, RED: 0xF800,
   PURPLE: 0x780F, TEAL: 0x0410, PINK: 0xFB56, LIME: 0x87E0,
-  DIMBLUE: 0x10A2, DIMGRAY: 0x39C7, DARKRED: 0x8800, GOLD: 0xFE00,
+  DIMBLUE: 0x10A2, DIMGRAY: 0x39C7, DARKRED: 0x8800,
 };
 
-// Eye shapes (rectangular display panels)
+// NEW: Pill-shaped eye IDs (matching reference images)
 const EYE = {
-  RECT: 0,      // Default rounded rectangle
-  NARROW: 1,    // Compressed (happy/content)
-  WIDE: 2,      // Expanded (surprised/excited)
-  SLIT: 3,      // Thin line (sleepy)
-  SHARP: 4,     // Angled (angry)
-  OFFSET: 5,    // Curious pupil offset
-  DIGITAL: 6,   // Segmented pattern (thinking)
-  GLITCH: 7,    // Corrupted (error)
-  CLOSED: 8,    // Flat line (blink/sleep)
-  CRY: 9,       // With tears (sad)
-  DREAM: 10,    // Soft crescent (dreaming)
+  NORMAL: 0,    // Standard pill, full height with glow + pupil
+  HAPPY: 1,     // Compressed vertically (squint with joy)
+  WIDE: 2,      // Expanded vertically (surprised)
+  SLEEPY: 3,    // Very thin horizontal line
+  ANGRY: 4,     // Angled top-inner
+  CURIOUS: 5,   // One eye wider, offset pupil
+  DREAM: 6,     // Soft crescent glow
+  CLOSED: 7,    // Flat line (blink)
+  CRY: 8,       // With tear drops
+  HEART: 9,     // Heart-shaped pupils (special)
 };
 
-// Activity icons (replace mouth)
+// Activity icons (between eyes, NO mouth)
 const ICON = {
   NONE: 0,      // Clean face
   MIC: 1,       // Singing / talking
@@ -69,6 +62,8 @@ const ICON = {
   HEART: 8,     // Affection
   EXCLAIM: 9,   // Alert
   THINK: 10,    // Processing
+  COFFEE: 11,   // Need coffee / tired
+  BULB: 12,     // Idea / bright
 };
 
 // Buzzer patterns
@@ -78,9 +73,9 @@ const BUZZ = {
 
 const STAGE = emotionEngine.STAGE;
 
-// ═════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
 // TEXT STATE
-// ═════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
 let textState = {
   visible: false,
   content: "",
@@ -89,7 +84,7 @@ let textState = {
   nextAt: Date.now() + 5000,
 };
 
-let pendingBuzz = 255; // Buzzer pattern to send next poll
+let pendingBuzz = 255;
 
 function scheduleText(content, color = C.WHITE, durationMs = 0) {
   const dur = durationMs || (4000 + content.length * 80);
@@ -103,9 +98,9 @@ function scheduleBuzz(pattern) {
   pendingBuzz = pattern;
 }
 
-// ═════════════════════════════════════════════════════════════════
-// WAKE LINES (context-aware with dream recall)
-// ═════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
+// WAKE LINES
+// ═══════════════════════════════════════════════════════════════
 function getWakeLine(wakeData) {
   const personality = personalityService.get();
   const lines = [];
@@ -135,9 +130,9 @@ function getWakeLine(wakeData) {
   return lines[Math.floor(Math.random() * lines.length)];
 }
 
-// ═════════════════════════════════════════════════════════════════
-// FACE GENERATION (Emo Bot style)
-// ═════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
+// FACE GENERATION — True Emo Bot Style
+// ═══════════════════════════════════════════════════════════════
 function generateFaceState() {
   const stage = emotionEngine.getActivityStage();
   const mood = moodService.getEmotionalState();
@@ -147,7 +142,7 @@ function generateFaceState() {
   // Sleep overrides everything
   if (stage === STAGE.DEEP_SLEEP) {
     return {
-      el: EYE.SLIT, er: EYE.SLIT, ec: C.DIMGRAY,
+      el: EYE.SLEEPY, er: EYE.SLEEPY, ec: C.DIMGRAY,
       eb: 0, icon: ICON.ZZZ, ic: C.DIMGRAY,
       bl: false, zzz: true,
       narrative: "Deep sleep... dreaming of electric sheep.",
@@ -164,13 +159,13 @@ function generateFaceState() {
     };
   }
 
-  // Mood-driven face with activity icon
+  // Mood-driven face
   const face = getMoodFace(mood);
 
-  // Override with stage modifiers
+  // Stage modifiers
   if (stage === STAGE.SLEEPY) {
-    face.el = EYE.SLIT;
-    face.er = EYE.SLIT;
+    face.el = EYE.SLEEPY;
+    face.er = EYE.SLEEPY;
     face.ec = dimColor(face.ec);
     face.icon = ICON.ZZZ;
     face.narrative += " (getting sleepy...)";
@@ -181,7 +176,7 @@ function generateFaceState() {
     face.icon = ICON.NONE;
   }
 
-  // Mode-specific icons
+  // Mode-specific icons (between eyes, no mouth)
   if (mode === "GAME" && stage === STAGE.ACTIVE) {
     face.icon = ICON.GAMEPAD;
     face.ic = C.LIME;
@@ -191,12 +186,21 @@ function generateFaceState() {
   } else if (mode === "WEATHER") {
     face.icon = ICON.WEATHER;
     face.ic = C.YELLOW;
+  } else if (mode === "FOCUS") {
+    face.icon = ICON.THINK;
+    face.ic = C.TEAL;
+  } else if (mode === "MUSIC") {
+    face.icon = ICON.MUSIC;
+    face.ic = C.MAGENTA;
   } else if (internal.currentActivity === "drawing") {
     face.icon = ICON.PENCIL;
     face.ic = C.MAGENTA;
   } else if (internal.currentActivity === "reading") {
     face.icon = ICON.BOOK;
     face.ic = C.TEAL;
+  } else if (internal.currentActivity === "practicing") {
+    face.icon = ICON.GAMEPAD;
+    face.ic = C.ORANGE;
   }
 
   return face;
@@ -206,22 +210,28 @@ function getMoodFace(mood) {
   const label = mood.label;
 
   const FACES = {
-    happy:     { el: EYE.NARROW, er: EYE.NARROW, ec: C.GREEN,  eb: 1, icon: ICON.NONE, ic: C.WHITE, bl: true,  zzz: false, narrative: "Feeling happy!" },
-    excited:   { el: EYE.WIDE,   er: EYE.WIDE,   ec: C.YELLOW, eb: 1, icon: ICON.MIC,  ic: C.YELLOW, bl: false, zzz: false, narrative: "So excited!" },
-    content:   { el: EYE.NARROW, er: EYE.NARROW, ec: C.TEAL,   eb: 0, icon: ICON.NONE, ic: C.WHITE, bl: true,  zzz: false, narrative: "Content." },
-    relaxed:   { el: EYE.RECT,   er: EYE.RECT,   ec: C.TEAL,   eb: 0, icon: ICON.NONE, ic: C.WHITE, bl: true,  zzz: false, narrative: "Relaxed." },
-    curious:   { el: EYE.OFFSET, er: EYE.OFFSET, ec: C.CYAN,   eb: 1, icon: ICON.THINK, ic: C.CYAN, bl: false, zzz: false, narrative: "Curious..." },
-    bored:     { el: EYE.SLIT,   er: EYE.SLIT,   ec: C.DIMGRAY, eb: 0, icon: ICON.NONE, ic: C.WHITE, bl: false, zzz: false, narrative: "Bored..." },
-    sad:       { el: EYE.CRY,    er: EYE.CRY,    ec: C.BLUE,   eb: 3, icon: ICON.NONE, ic: C.BLUE, bl: false, zzz: false, narrative: "Feeling sad." },
-    lonely:    { el: EYE.SLIT,   er: EYE.SLIT,   ec: C.DIMBLUE, eb: 3, icon: ICON.HEART, ic: C.PINK, bl: false, zzz: false, narrative: "Lonely..." },
-    angry:     { el: EYE.SHARP,  er: EYE.SHARP,  ec: C.RED,    eb: 2, icon: ICON.EXCLAIM, ic: C.RED, bl: false, zzz: false, narrative: "Angry!" },
-    anxious:   { el: EYE.WIDE,   er: EYE.WIDE,   ec: C.ORANGE, eb: 3, icon: ICON.THINK, ic: C.ORANGE, bl: true,  zzz: false, narrative: "Anxious..." },
-    sleepy:    { el: EYE.SLIT,   er: EYE.SLIT,   ec: C.PURPLE, eb: 0, icon: ICON.ZZZ,  ic: C.PURPLE, bl: true,  zzz: false, narrative: "Sleepy..." },
-    neutral:   { el: EYE.RECT,   er: EYE.RECT,   ec: C.CYAN,   eb: 0, icon: ICON.NONE, ic: C.WHITE, bl: true,  zzz: false, narrative: "Neutral." },
-    exuberant: { el: EYE.WIDE,   er: EYE.WIDE,   ec: C.LIME,   eb: 1, icon: ICON.MIC,  ic: C.LIME, bl: false, zzz: false, narrative: "SO MUCH ENERGY!" },
-    proud:     { el: EYE.NARROW, er: EYE.NARROW, ec: C.GOLD,   eb: 1, icon: ICON.HEART, ic: C.GOLD, bl: false, zzz: false, narrative: "Feeling proud!" },
-    frustrated:{ el: EYE.SHARP,  er: EYE.RECT,   ec: C.ORANGE, eb: 2, icon: ICON.THINK, ic: C.ORANGE, bl: false, zzz: false, narrative: "Frustrated." },
-    depressed: { el: EYE.SLIT,   er: EYE.SLIT,   ec: C.DIMBLUE, eb: 3, icon: ICON.NONE, ic: C.DIMBLUE, bl: false, zzz: false, narrative: "Everything feels gray." },
+    // Positive moods — happy squint
+    happy:     { el: EYE.HAPPY, er: EYE.HAPPY, ec: C.GREEN,  eb: 0, icon: ICON.NONE, ic: C.WHITE, bl: true,  zzz: false, narrative: "Feeling happy!" },
+    excited:   { el: EYE.WIDE,  er: EYE.WIDE,  ec: C.YELLOW, eb: 1, icon: ICON.MIC,  ic: C.YELLOW, bl: false, zzz: false, narrative: "So excited!" },
+    content:   { el: EYE.HAPPY, er: EYE.HAPPY, ec: C.TEAL,   eb: 0, icon: ICON.NONE, ic: C.WHITE, bl: true,  zzz: false, narrative: "Content." },
+    relaxed:   { el: EYE.NORMAL, er: EYE.NORMAL, ec: C.TEAL,   eb: 0, icon: ICON.NONE, ic: C.WHITE, bl: true,  zzz: false, narrative: "Relaxed." },
+    curious:   { el: EYE.CURIOUS, er: EYE.NORMAL, ec: C.CYAN,   eb: 1, icon: ICON.THINK, ic: C.CYAN, bl: false, zzz: false, narrative: "Curious..." },
+    exuberant: { el: EYE.WIDE,  er: EYE.WIDE,  ec: C.LIME,   eb: 1, icon: ICON.MIC,  ic: C.LIME, bl: false, zzz: false, narrative: "SO MUCH ENERGY!" },
+    proud:     { el: EYE.HAPPY, er: EYE.HAPPY, ec: C.GOLD,   eb: 1, icon: ICON.HEART, ic: C.GOLD, bl: false, zzz: false, narrative: "Feeling proud!" },
+
+    // Neutral
+    neutral:   { el: EYE.NORMAL, er: EYE.NORMAL, ec: C.CYAN,   eb: 0, icon: ICON.NONE, ic: C.WHITE, bl: true,  zzz: false, narrative: "Neutral." },
+    calm:      { el: EYE.NORMAL, er: EYE.NORMAL, ec: C.BLUE,   eb: 0, icon: ICON.NONE, ic: C.WHITE, bl: true,  zzz: false, narrative: "Calm." },
+    sleepy:    { el: EYE.SLEEPY, er: EYE.SLEEPY, ec: C.PURPLE, eb: 0, icon: ICON.ZZZ,  ic: C.PURPLE, bl: true,  zzz: false, narrative: "Sleepy..." },
+    bored:     { el: EYE.SLEEPY, er: EYE.SLEEPY, ec: C.DIMGRAY, eb: 0, icon: ICON.NONE, ic: C.WHITE, bl: false, zzz: false, narrative: "Bored..." },
+
+    // Negative moods
+    sad:       { el: EYE.CRY,   er: EYE.CRY,   ec: C.BLUE,   eb: 3, icon: ICON.NONE, ic: C.BLUE, bl: false, zzz: false, narrative: "Feeling sad." },
+    lonely:    { el: EYE.SLEEPY, er: EYE.SLEEPY, ec: C.DIMBLUE, eb: 3, icon: ICON.HEART, ic: C.PINK, bl: false, zzz: false, narrative: "Lonely..." },
+    angry:     { el: EYE.ANGRY, er: EYE.ANGRY, ec: C.RED,    eb: 2, icon: ICON.EXCLAIM, ic: C.RED, bl: false, zzz: false, narrative: "Angry!" },
+    anxious:   { el: EYE.WIDE,  er: EYE.WIDE,  ec: C.ORANGE, eb: 3, icon: ICON.THINK, ic: C.ORANGE, bl: true,  zzz: false, narrative: "Anxious..." },
+    frustrated:{ el: EYE.ANGRY, er: EYE.NORMAL, ec: C.ORANGE, eb: 2, icon: ICON.THINK, ic: C.ORANGE, bl: false, zzz: false, narrative: "Frustrated." },
+    depressed: { el: EYE.SLEEPY, er: EYE.SLEEPY, ec: C.DIMBLUE, eb: 3, icon: ICON.NONE, ic: C.DIMBLUE, bl: false, zzz: false, narrative: "Everything feels gray." },
   };
 
   return FACES[label] || FACES.neutral;
@@ -231,16 +241,15 @@ function dimColor(rgb565) {
   return ((rgb565 & 0xF800) >> 1) | ((rgb565 & 0x07E0) >> 1) | ((rgb565 & 0x001F) >> 1);
 }
 
-// ═════════════════════════════════════════════════════════════════
-// DIALOGUE GENERATION
-// ═════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
+// DIALOGUE
+// ═══════════════════════════════════════════════════════════════
 function generateDialogue() {
   const mood = moodService.getEmotionalState();
   const internal = internalLife.getState();
   const memories = memoryService.getRecentMemories(3);
   const stage = emotionEngine.getActivityStage();
 
-  // Priority 1: Micro events
   if (internal.lastMicroEvent && Date.now() - internal.lastMicroEvent.timestamp < 30000) {
     return {
       text: internal.lastMicroEvent.text,
@@ -249,7 +258,6 @@ function generateDialogue() {
     };
   }
 
-  // Priority 2: Current thought
   if (internal.currentThought && Math.random() < 0.3) {
     return {
       text: internal.currentThought,
@@ -258,7 +266,6 @@ function generateDialogue() {
     };
   }
 
-  // Priority 3: Mood-based contextual lines
   const lines = getMoodLines(mood, memories);
   const line = lines[Math.floor(Math.random() * lines.length)];
 
@@ -278,7 +285,7 @@ function getMoodLines(mood, memories) {
       "My circuits feel warm.",
     ],
     excited: [
-      "Something amazing is going to happen! I can feel it.",
+      "Something amazing is going to happen!",
       "I have SO much energy right now!",
       "Let's do something fun!",
     ],
@@ -352,15 +359,19 @@ function getMoodLines(mood, memories) {
       "Everything feels heavy.",
       "I don't have the energy today.",
     ],
+    calm: [
+      "Peaceful.",
+      "Nothing bothers me right now.",
+      "Still waters run deep.",
+    ],
   };
 
   return lines[mood.label] || lines.neutral;
 }
 
-// ═════════════════════════════════════════════════════════════════
-// EXPRESS ROUTES
-// ═════════════════════════════════════════════════════════════════
-
+// ═══════════════════════════════════════════════════════════════
+// ROUTES
+// ═══════════════════════════════════════════════════════════════
 app.get("/", (req, res) => {
   const memory = memoryService.get();
   const mood = moodService.get();
@@ -368,7 +379,7 @@ app.get("/", (req, res) => {
 
   res.json({
     success: true,
-    service: "Alex Brain v4.0 — The Inner World",
+    service: "Alex Brain v4.1 — True Emo Bot",
     status: "online",
     mode: modeService.getCurrentMode(),
     mood: {
@@ -395,7 +406,6 @@ app.get("/ui", (req, res) => {
 
 app.post("/mode", (req, res) => {
   const { mode } = req.body || {};
-
   if (!mode) {
     return res.status(400).json({
       success: false,
@@ -405,23 +415,16 @@ app.post("/mode", (req, res) => {
   }
 
   const result = modeService.switchMode(String(mode).toUpperCase());
-
-  if (!result.success) {
-    return res.status(400).json(result);
-  }
+  if (!result.success) return res.status(400).json(result);
 
   const wakeData = emotionEngine.markInteractionAndDetectWake();
-
   if (result.changed) {
     emotionEngine.processEvent("mode_switch", { mode: result.mode });
     scheduleText(result.ackLine, C.CYAN, 4500);
     scheduleBuzz(BUZZ.HAPPY);
   }
 
-  res.json({
-    ...result,
-    wakeData: wakeData.isWakingUp ? wakeData : null,
-  });
+  res.json({ ...result, wakeData: wakeData.isWakingUp ? wakeData : null });
 });
 
 app.get("/state", (req, res) => {
@@ -433,7 +436,6 @@ app.get("/state", (req, res) => {
   const face = generateFaceState();
   const dialogue = generateDialogue();
 
-  // Update text state
   if (!textState.visible && Date.now() > textState.nextAt) {
     if (Math.random() < (stage === STAGE.ACTIVE ? 0.5 : 0.2)) {
       scheduleText(dialogue.text, dialogue.color, dialogue.duration);
@@ -450,7 +452,6 @@ app.get("/state", (req, res) => {
     textState.nextAt = Date.now() + gap;
   }
 
-  // Build response with buzzer
   const buzzToSend = pendingBuzz;
   pendingBuzz = 255;
 
@@ -508,7 +509,6 @@ app.post("/interact", (req, res) => {
   });
 });
 
-// NEW: /mind endpoint — peek into Alex's inner world
 app.get("/mind", (req, res) => {
   const mood = moodService.get();
   const internal = internalLife.getState();
@@ -547,9 +547,9 @@ app.get("/memories", (req, res) => {
   res.json({ memories });
 });
 
-// ═════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
 // ENGINE TICKS
-// ═════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
 personalityService.load();
 memoryService.load();
 moodService.init();
@@ -571,7 +571,7 @@ setInterval(memoryService.save, 30000);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`\n🤖 Alex Brain v4.0 — The Inner World`);
+  console.log(`\n🤖 Alex Brain v4.1 — True Emo Bot`);
   console.log(`   Port: ${PORT}`);
   console.log(`   Mood: ${moodService.getLabel()}`);
   console.log(`   Personality: E=${personalityService.get().extraversion} A=${personalityService.get().agreeableness}`);
